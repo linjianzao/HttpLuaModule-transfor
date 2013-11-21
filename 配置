@@ -1,0 +1,107 @@
+syntax = 语法   default = 默认值   context = 配置的地方
+lua_use_default_type
+syntax：lua_use_default_type on | off
+default：on
+context：http, server, location, location if
+说明：
+Specifies whether to use the MIME type specified by the default_type directive for the default value of the Content-Type response header. If you do not want a default Content-Type response header for your Lua request handlers, then turn this directive off.
+指定MIME 的类型
+扩展阅读：http://hi.baidu.com/tangzhonghai/item/0df26339f80b17f8de22219b
+
+
+lua_code_cache
+syntax：lua_code_cache on | off
+default：on
+context: http, server, location, location if
+说明：
+缓存 set_by_lua_file, content_by_lua_file, rewrite_by_lua_file, and access_by_lua_file, 的文件。
+一般是开发的时候关闭， 线上开启，速度加快很多，如果没有关闭你修改代码得到的结果可能和你预期的不一样
+
+
+lua_regex_cache_max_entries
+syntax: lua_regex_cache_max_entries <num>
+default: lua_regex_cache_max_entries 1024
+context: http
+说明：
+指定正则编译的缓存的最大数量
+会缓存 ngx.re.match, ngx.re.gmatch, ngx.re.sub, and ngx.re.gsub
+默认缓存1024长度，如果超过的话就不会缓存
+
+
+
+lua_regex_match_limit
+syntax: lua_regex_match_limit <num>
+default: lua_regex_match_limit 0
+context: http
+说明：
+Specifies the "match limit" used by the PCRE library when executing the ngx.re API. To quote the PCRE manpage, "the limit ... has the effect of limiting the amount of backtracking that can take place."
+When the limit is hit, the error string "pcre_exec() failed: -8" will be returned by the ngx.re API functions on the Lua land.
+When setting the limit to 0, the default "match limit" when compiling the PCRE library is used. And this is the default value of this directive.
+当执行 ngx.re API 时指定使用PCRE库的匹配限制。
+如果达到匹配限制，ngx.re API会返回-8
+设为0时，匹配限制就是PCRE库的限制
+
+
+
+lua_package_path
+syntax: lua_package_path <lua-style-path-str>
+default: The content of LUA_PATH environ variable or Lua's compiled-in defaults.
+context: http
+设置lua模块搜索的路径。  就是包含了模块文件就可以直接 用require “模块名”
+
+
+
+lua_package_cpath
+syntax: lua_package_cpath <lua-style-cpath-str>
+default: The content of LUA_CPATH environment variable or Lua's compiled-in defaults.
+context: http
+设置lua C 模块的搜索路径
+
+
+
+init_by_lua
+syntax: init_by_lua <lua-script-str>
+context: http
+phase: loading-config
+说明：
+Nginx主进程load lua配置的时候，就可以在lua虚拟机的层面执行
+nginx接到 HUP 信号， 重新load配置文件的时候 lua 虚拟机会重建，init_by_lua会在新的虚拟机执行
+通常你可以在lua环境变量或者在服务启动时预加载。例子：
+ init_by_lua 'cjson = require "cjson"';
+
+  server {
+      location = /api {
+          content_by_lua '
+              ngx.say(cjson.encode({dog = 5, cat = 6}))
+          ';
+      }
+  }
+
+在这个阶段你也可以初始化 lua_shared_dict 的存储，例子：
+    lua_shared_dict dogs 1m;
+ 
+    init_by_lua '
+        local dogs = ngx.shared.dogs;
+        dogs:set("Tom", 56)
+    ';
+ 
+    server {
+        location = /api {
+            content_by_lua '
+                local dogs = ngx.shared.dogs;
+                ngx.say(dogs:get("Tom"))
+            ';
+        }
+    }
+但是使用lua_shared_dict 在配置被重新载入的时候是不会被清除的。
+所以在这个例子里，如果你不想在你的 init_by_lua 代码里重新初始化shm存储，
+你必须定义一个标示，然后在init_by_lua 代码里检查标示。
+其他详细说明看文档。
+
+
+init_by_lua_file
+syntax: init_by_lua_file <path-to-lua-script-file>
+context: http
+phase: loading-config
+说明： 和 init_by_lua 差不多，除了指定的文件<path-to-lua-script-file>包含lua代码或Lua的/ LuaJIT字节码的执行。
+当给 foo/bar.lua 的时候， 会转为绝对路径。可以在服务器启动的时候使用-p 来相对
