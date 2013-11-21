@@ -105,3 +105,51 @@ context: http
 phase: loading-config
 说明： 和 init_by_lua 差不多，除了指定的文件<path-to-lua-script-file>包含lua代码或Lua的/ LuaJIT字节码的执行。
 当给 foo/bar.lua 的时候， 会转为绝对路径。可以在服务器启动的时候使用-p 来相对
+
+
+
+
+set_by_lua
+syntax: set_by_lua $res <lua-script-str> [$arg1 $arg2 ...]
+context: server, server if, location, location if
+phase: server-rewrite, rewrite
+说明：
+使用参数 执行 在<lua-script-str> 指定的代码，返回string 结果到$res
+<lua-script-str> 的代码可以使用API 调用，然后使用 ngx.arg 接收结果，索引从1开始
+这个指令是设计用来执行短、快的代码的，应该避免耗时的代码
+不能在这里使用的API函数：
+ Output API functions (e.g., ngx.say and ngx.send_headers)
+ Control API functions (e.g., ngx.exit)
+ Subrequest API functions (e.g., ngx.location.capture and ngx.location.capture_multi)
+ Cosocket API functions (e.g., ngx.socket.tcp and ngx.req.socket).
+此外，这个指令一次只能返回一个nginx变量值，替代的解决方法时  ngx.var.VARIABLE 。例子：
+   location /foo {
+        set $diff ''; # we have to predefine the $diff variable here
+ 
+        set_by_lua $sum '
+            local a = 32
+            local b = 56
+ 
+            ngx.var.diff = a - b;  -- write to $diff directly
+            return a + b;          -- return the $sum value normally
+        ';
+ 
+        echo "sum = $sum, diff = $diff";
+    }
+    
+你可以自由混用  HttpRewriteModule, HttpSetMiscModule, and HttpArrayVarModule   模块的所有指令 
+    set $foo 32;
+    set_by_lua $bar 'tonumber(ngx.var.foo) + 1';
+    set $baz "bar: $bar";  # $baz == "bar: 33"
+这个模块需要 ngx_devel_kit 模块
+
+
+
+
+
+set_by_lua_file
+syntax: set_by_lua_file $res <path-to-lua-script-file> [$arg1 $arg2 ...]
+context: server, server if, location, location if
+phase: server-rewrite, rewrite
+说明：
+和set_by_lua差不多
