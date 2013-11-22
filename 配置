@@ -152,4 +152,47 @@ syntax: set_by_lua_file $res <path-to-lua-script-file> [$arg1 $arg2 ...]
 context: server, server if, location, location if
 phase: server-rewrite, rewrite
 说明：
-和set_by_lua差不多
+和set_by_lua差不多,除了使用<path-to-lua-script-file> 包含的lua代码
+ <path-to-lua-script-file> 支持nginx字符串变量参数，但要特别注意注入攻击
+使用 -p  启动nginx服务器， 类似foo/bar.lua  这样的相对路径 会转为绝对路径
+当lua代码缓存开启的时候，用户的代码只会在第一次请求的时候加载并缓存，当lua源代码修改的时候，nginx的配置文件每一次都必须重新加载
+所以当你调试lua代码的时候最好把lua_code_cache 关掉
+这个指令需要 ngx_devel_kit 模块
+
+
+
+content_by_lua
+syntax: content_by_lua <lua-script-str>
+context: location, location if
+phase: content
+说明：
+类似内容处理，每一次请求的时候都会执行<lua-script-str>的代码，
+这个lua代码可以用 API调用，，执行的上时候每一次都会在全局环境下催生新的协程
+不要在同一个location中和其他的内容处理一起使用这个指令。比如这个指令不能和 proxy_pass 指令在同一个location使用
+
+
+
+
+content_by_lua_file
+syntax: content_by_lua_file <path-to-lua-script-file>
+context: location, location if
+phase: content
+说明：
+和content_by_lua差不多,除了使用<path-to-lua-script-file> 包含的lua代码
+nginx变量在 <path-to-lua-script-file> 中使用，让他能更灵活。但是这个带有一定的风险，一般不推荐使用
+
+
+
+
+
+rewrite_by_lua
+syntax: rewrite_by_lua <lua-script-str>
+context: http, server, location, location if
+phase: rewrite tail
+
+location /foo {
+     set $a 12; # create and initialize $a
+     set $b ""; # create and initialize $b
+     rewrite_by_lua 'ngx.var.b = tonumber(ngx.var.a) + 1';
+     echo "res = $b";
+ }
