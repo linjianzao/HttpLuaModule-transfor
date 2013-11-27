@@ -261,7 +261,24 @@ ngx_eval 模块和rewrite_by_lua模块近似，例子：
 失败的时候会ngx.exit(ngx.HTTP_INTERNAL_SERVER_ERROR) (or its friends) 
 
 
+如果HttpRewriteModule的rewrite指令用来修改URI和 在location重新查找， 在location里的任何 rewrite_by_lua 或 rewrite_by_lua_file都不会运行，例子：
+location /foo {
+        rewrite ^ /bar;
+        rewrite_by_lua 'ngx.exit(503)';
+}
+location /bar {
+  ...
+}
+在这里， ngx.exit(503) 将永远不会运行. 这是在 如果rewrite ^ /bar 是最后使用，进行内部重定向的情况下。
+如果改用break这个就不会进行内部重定向，rewrite_by_lua的代码会执行
+rewrite_by_lua通常是用在请求处理的最后重写，至少在 rewrite_by_lua_no_postpone 开启的时候是这样
 
+
+
+rewrite_by_lua_file
+syntax: rewrite_by_lua_file <path-to-lua-script-file>
+context: http, server, location, location if
+phase: rewrite tail
 
 
 
