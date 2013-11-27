@@ -189,10 +189,88 @@ rewrite_by_lua
 syntax: rewrite_by_lua <lua-script-str>
 context: http, server, location, location if
 phase: rewrite tail
-
+做为每一次请求都重写阶段处理程序和在 <lua-script-str>执行lua代码，在lua代码中可以使用api调用，可以在独立的全局环境中催生新的协程
+备注，这个通常是运行在 HttpRewriteModule模块之后，例子：
 location /foo {
      set $a 12; # create and initialize $a
      set $b ""; # create and initialize $b
      rewrite_by_lua 'ngx.var.b = tonumber(ngx.var.a) + 1';
      echo "res = $b";
  }
+因为在rewrite_by_lua之前设置了$a和$b，所以正常运行
+
+以下例子运行结果和预期的不一样：
+ location /foo {
+          set $a 12; # create and initialize $a
+          set $b ''; # create and initialize $b
+          rewrite_by_lua 'ngx.var.b = tonumber(ngx.var.a) + 1';
+          if ($b = '13') {
+             rewrite ^ /bar redirect;
+             break;
+          }
+    
+          echo "res = $b";
+      }
+因为是在 rewrite_by_lua 之后。
+正确的写法应该全写在 rewrite_by_lua里，例子：
+set $a '12';
+set $b '';
+rewrite_by_lua '
+    ngx.var.b = tonumber(ngx.var.a)+1
+    if tonumber(ngx.var.b)==13 then
+        return ngx.redirect("/bar")
+    end
+'; 
+echo "res=$b";
+
+
+ngx_eval 模块和rewrite_by_lua模块近似，例子：
+ location / {
+        eval $res {
+            proxy_pass http://foo.com/check-spam;
+        }
+ 
+        if ($res = 'spam') {
+            rewrite ^ /terms-of-use.html redirect;
+        }
+ 
+        fastcgi_pass ...;
+    }
+    
+ 用ngx_lua实现：
+   location = /check-spam {
+        internal;
+        proxy_pass http://foo.com/check-spam;
+    }
+ 
+    location / {
+        rewrite_by_lua '
+            local res = ngx.location.capture("/check-spam")
+            if res.body == "spam" then
+                return ngx.redirect("/terms-of-use.html")
+            end
+        ';
+ 
+        fastcgi_pass ...;
+    }
+
+
+就像其他重写处理程序， rewrite_by_lua 也运行子请求
+备注，当在 rewrite_by_lua 内调用ngx.exit(ngx.OK)，nginx请求处理控制流程将会继续处理内容。
+在rewrite_by_lua内终止请求，调用 ngx.exit 将会在成功的时候返回 status >= 200 (ngx.HTTP_OK) 到status < 300 (ngx.HTTP_SPECIAL_RESPONSE) 之间
+失败的时候会ngx.exit(ngx.HTTP_INTERNAL_SERVER_ERROR) (or its friends) 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
