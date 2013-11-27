@@ -279,9 +279,12 @@ rewrite_by_lua_file
 syntax: rewrite_by_lua_file <path-to-lua-script-file>
 context: http, server, location, location if
 phase: rewrite tail
-
-
-
+说明：
+和rewrite_by_lua是一样的除了通过  <path-to-lua-script-file> 包含的lua代码
+nginx 变量可以在 <path-to-lua-script-file>中使用提高灵活。
+相对路径使用-p的时候自动转绝对路径
+lua_code_cache开启有效（同上）
+rewrite_by_lua通常是用在请求处理的最后重写，至少在 rewrite_by_lua_no_postpone 开启的时候是这样
 
 
 
