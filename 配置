@@ -629,7 +629,7 @@ lua_http10_buffering
 syntax: lua_http10_buffering on|off
 default: lua_http10_buffering on
 context: http, server, location, location-if
-测试
+测试测试
 
 
 
