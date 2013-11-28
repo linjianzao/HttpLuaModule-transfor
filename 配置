@@ -284,13 +284,332 @@ phase: rewrite tail
 nginx 变量可以在 <path-to-lua-script-file>中使用提高灵活。
 相对路径使用-p的时候自动转绝对路径
 lua_code_cache开启有效（同上）
-rewrite_by_lua通常是用在请求处理的最后重写，至少在 rewrite_by_lua_no_postpone 开启的时候是这样
+rewrite_by_lua_file通常是用在请求处理的最后重写，至少在 rewrite_by_lua_no_postpone 开启的时候是这样
+
+
+
+access_by_lua
+syntax: access_by_lua <lua-script-str>
+context: http, server, location, location if
+phase: access tail
+说明：
+做为每一次请求都重写阶段处理程序和在 <lua-script-str>执行lua代码，在lua代码中可以使用api调用，可以在独立的全局环境中催生新的协程
+通常是在 HttpAccessModule模块后面运行的
+ location / {
+        deny    192.168.1.1;
+        allow   192.168.1.0/24;
+        allow   10.1.1.0/16;
+        deny    all;
+ 
+        access_by_lua '
+            local res = ngx.location.capture("/mysql", { ... })
+            ...
+        ';
+ 
+        # proxy_pass/fastcgi_pass/...
+    }
+
+如果客户端IP在黑名单，在执行sql查询前会被禁止，然后执行access_by
+_lua 进行复杂的验证
+ ngx_auth_request模块和access_by_lua类似。
+ location / {
+        auth_request /auth;
+ 
+        # proxy_pass/fastcgi_pass/postgres_pass/...
+    }
+
+ngx_lua实现：
+    location / {
+        access_by_lua '
+            local res = ngx.location.capture("/auth")
+ 
+            if res.status == ngx.HTTP_OK then
+                return
+            end
+ 
+            if res.status == ngx.HTTP_FORBIDDEN then
+                ngx.exit(res.status)
+            end
+ 
+            ngx.exit(ngx.HTTP_INTERNAL_SERVER_ERROR)
+        ';
+ 
+        # proxy_pass/fastcgi_pass/postgres_pass/...
+    }
+    
+有其他处理程序的时候子请求access_by_lua不会执行    
+备注，当在  access_by_lua  内调用ngx.exit(ngx.OK)，nginx请求处理控制流程将会继续处理内容。
+在 access_by_lua 内终止请求，调用 ngx.exit 将会在成功的时候返回 status >= 200 (ngx.HTTP_OK) 到status < 300 (ngx.HTTP_SPECIAL_RESPONSE) 之间
+失败的时候会ngx.exit(ngx.HTTP_INTERNAL_SERVER_ERROR) (or its friends) 
+
+
+access_by_lua_file
+syntax: access_by_lua_file <path-to-lua-script-file>
+context: http, server, location, location if
+phase: access tail
+说明：就不说明了和其他的一样
+
+
+
+header_filter_by_lua
+syntax: header_filter_by_lua <lua-script-str>
+context: http, server, location, location if
+phase: output-header-filter
+说明：
+在 <lua-script-str>中指定输出的头信息过滤器
+可以使用api关闭这个选项：
+Output API functions (e.g., ngx.say and ngx.send_headers)
+Control API functions (e.g., ngx.exit and ngx.exec)
+Subrequest API functions (e.g., ngx.location.capture and ngx.location.capture_multi)
+Cosocket API functions (e.g., ngx.socket.tcp and ngx.req.socket).
+这有个覆盖返回头信息的例子：
+location / {
+        proxy_pass http://mybackend;
+        header_filter_by_lua 'ngx.header.Foo = "blah"';
+    }
+
+
+
+
+header_filter_by_lua_file
+syntax: header_filter_by_lua_file <path-to-lua-script-file>
+context: http, server, location, location if
+phase: output-header-filter
+说明：就不说明了和其他的一样
+
+
+
+body_filter_by_lua
+syntax: body_filter_by_lua <lua-script-str>
+context: http, server, location, location if
+phase: output-body-filter
+说明：
+在 <lua-script-str>中指定输出body信息过滤器
+输入的数据通过ngx.arg[1]传递和用EOF标记响应正文的结尾。通过 ngx.arg[2] 传递
+eof 只是标记last_buf 或者last_in_chain 标记 类似nginx的链条缓冲区.
+输出数据可以使用 Lua语句立即终止：
+return ngx.ERROR
+这将会截断响应体，通常会产生残缺的和无效的响应。
+lua代码可以通过用lua字符串或table重写ngx.arg[1]输入数据块的修改版本到nginx输出体过滤器，比如转换响应体的所有小写字母，我们可以这样写：
+    location / {
+        proxy_pass http://mybackend;
+        body_filter_by_lua 'ngx.arg[1] = string.upper(ngx.arg[1])';
+    }
+    
+当把 ngx.arg[1]设置成nil或者空，将不会有任何数据块通过过滤器
+同样新的eof也能指定设置 ngx.arg[2] 的值，例子：
+  location /t {
+        echo hello world;
+        echo hiya globe;
+ 
+        body_filter_by_lua '
+            local chunk = ngx.arg[1]
+            if string.match(chunk, "hello") then
+                ngx.arg[2] = true  -- new eof
+                return
+            end
+ 
+            -- just throw away any remaining chunk data
+            ngx.arg[1] = nil
+        ';
+    }
+    
+然后  GET 访问 /t会输出：
+   hello world
+这是因为过滤器看到块包含hello，然后它就会立即把eof设置成true，返回被阶段，但依旧是有效的响应体
+当lua代码修改响应体的长度，然后必须强制输出流明确内容响应头长度，如：
+location /foo {
+    # fastcgi_pass/proxy_pass/...
+
+    header_filter_by_lua 'ngx.header.content_length = nil';
+    body_filter_by_lua 'ngx.arg[1] = string.len(ngx.arg[1]) .. "\\n"';
+}
+    
+请注意下列api在这个环境下已经禁用：
+Output API functions (e.g., ngx.say and ngx.send_headers)
+Control API functions (e.g., ngx.exit and ngx.exec)
+Subrequest API functions (e.g., ngx.location.capture and ngx.location.capture_multi)
+Cosocket API functions (e.g., ngx.socket.tcp and ngx.req.socket).
+
+Nginx输出过滤器也许会在一次请求中被调用多次，因为响应体可能会在块中传送。在单次的http生命周期中lua代码的这个指令也可能会被调用多次
+
+
+
+body_filter_by_lua_file
+syntax: body_filter_by_lua_file <path-to-lua-script-file>
+context: http, server, location, location if
+phase: output-body-filter
+说明：和其他的大部分一样
 
 
 
 
 
+log_by_lua
+syntax: log_by_lua <lua-script-str>
+context: http, server, location, location if
+phase: log
+内联 <lua-script-str> 运行lua源代码的日志。这个不会代替access 日志，但是会在之后运行
+下面的API将被禁用：
+Output API functions (e.g., ngx.say and ngx.send_headers)
+Control API functions (e.g., ngx.exit)
+Subrequest API functions (e.g., ngx.location.capture and ngx.location.capture_multi)
+Cosocket API functions (e.g., ngx.socket.tcp and ngx.req.socket).
+这有一个采集 $upstream_response_time 平均数据的例子：
 
+ lua_shared_dict log_dict 5M;
+ 
+    server {
+        location / {
+            proxy_pass http://mybackend;
+ 
+            log_by_lua '
+                local log_dict = ngx.shared.log_dict
+                local upstream_time = tonumber(ngx.var.upstream_response_time)
+ 
+                local sum = log_dict:get("upstream_time-sum") or 0
+                sum = sum + upstream_time
+                log_dict:set("upstream_time-sum", sum)
+ 
+                local newval, err = log_dict:incr("upstream_time-nb", 1)
+                if not newval and err == "not found" then
+                    log_dict:add("upstream_time-nb", 0)
+                    log_dict:incr("upstream_time-nb", 1)
+                end
+            ';
+        }
+ 
+        location = /status {
+            content_by_lua '
+                local log_dict = ngx.shared.log_dict
+                local sum = log_dict:get("upstream_time-sum")
+                local nb = log_dict:get("upstream_time-nb")
+ 
+                if nb and sum then
+                    ngx.say("average upstream response time: ", sum / nb,
+                            " (", nb, " reqs)")
+                else
+                    ngx.say("no data yet")
+                end
+            ';
+        }
+    }
+
+
+log_by_lua_file
+syntax: log_by_lua_file <path-to-lua-script-file>
+context: http, server, location, location if
+phase: log
+说明：和其他的大部分一样
+
+
+
+
+lua_need_request_body
+syntax: lua_need_request_body <on|off>
+default: off
+context: main | server | location
+phase: depends on usage
+说明：
+确定是否在 rewrite/access/access_by_lua*  之前要强制读取请求数据。nginx核心默认是不读取客户端的请求体
+如果需要请求体的数据，这个指令必须开启 或者在lua代码中必须调用ngx.req.read_body
+读取请求体变量 $request_body ， client_body_buffer_size 必须和 client_max_body_size值一样。
+因为当内容长度超过client_body_buffer_size 但是却低于 client_max_body_size,nginx将会把缓冲区的数据写入硬盘的临时文件，然后 $request_body 的值就会变成空的
+如果location包含 rewrite_by_lua 或 rewrite_by_lua_file指令，只会读取 rewrite_by_lua 或 rewrite_by_lua_file 之前的请求体
+同样的，如果只指定 content_by_lua，那么请求体在 lua代码处理程序之前是不会被调用的
+这边推荐用 ngx.req.read_body 和ngx.req.discard_body控制请求体读取
+这也适用于 access_by_lua 和 access_by_lua_file.
+
+
+
+
+lua_shared_dict
+syntax: lua_shared_dict <name> <size>
+default: no
+context: http
+phase: depends on usage
+说明：
+定义一个共享内存，  ngx.shared.<name> 在服务端存储lua字典
+<size>  的参数单位是m:
+ http {
+        lua_shared_dict dogs 10m;
+        ...
+    }
+
+详情查看ngx.shared.DICT
+
+
+
+lua_socket_connect_timeout
+syntax: lua_socket_connect_timeout
+default: lua_socket_connect_timeout 60s
+context: http, server, location
+这个指令控制默认的TCP/unix-domain里的socket对象连接过期时间，可以使用 settimeout 覆盖
+<time>参数是一个整型，单位可以是s (秒), ms (毫秒), m (分钟)，默认的单位是秒，默认设置是60秒
+
+
+
+
+lua_socket_send_timeout
+syntax: lua_socket_send_timeout <time>
+default: lua_socket_send_timeout 60s
+context: http, server, location
+这个指令控制默认的TCP/unix-domain里的socket对象发送的过期时间，可以使用 settimeout 覆盖
+<time>参数是一个整型，单位可以是s (秒), ms (毫秒), m (分钟)，默认的单位是秒，默认设置是60秒
+
+
+
+
+lua_socket_send_lowat
+syntax: lua_socket_send_lowat <size>
+default: lua_socket_send_lowat 0
+context: http, server, location
+控制cosocket发送的缓冲。
+
+
+
+lua_socket_read_timeout
+syntax: lua_socket_read_timeout <time>
+default: lua_socket_read_timeout 60s
+context: http, server, location
+phase: depends on usage
+这个指令控制默认的TCP/unix-domain里的socket对象接收和迭代返回单位接收的过期时间，可以使用 settimeout 覆盖
+<time>参数是一个整型，单位可以是s (秒), ms (毫秒), m (分钟)，默认的单位是秒，默认设置是60秒
+
+
+
+lua_socket_buffer_size
+syntax: lua_socket_buffer_size <size>
+default: lua_socket_buffer_size 4k/8k
+context: http, server, location
+说明：
+指定cosocket读取操作的缓冲区大小
+这个缓冲区不用每个都那么大，因为cosocket 100%支持非缓冲区的读和解析。所以即使是1个字节也可以正常工作，但是处处这样可能是可怕的
+
+
+
+
+lua_socket_pool_size
+syntax: lua_socket_pool_size <size>
+default: lua_socket_pool_size 30
+context: http, server, location
+说明：
+指定每一个远程服务器关联cosocket池的限制。
+默认每个池 30连接
+当连接池数超过设置的值，最早的连接会被关闭 来让当前的连接可以用。
+注：cosocket连接池是每个nginx的工作进程而不是每个nginx的服务实例
+所以在这边指定限制同时也适用每个单nginx工作进程
+
+
+
+
+lua_socket_keepalive_timeout
+syntax: lua_socket_keepalive_timeout <time>
+default: lua_socket_keepalive_timeout 60s
+context: http, server, location
+说明：
+这个指令控制cosocket 内建连接池的默认最大空闲时间。当时间过期空闲连接将会被关闭然后从连接池中删除。这个设置会被 setkeepalive覆盖
+ <time>
 
 
 
