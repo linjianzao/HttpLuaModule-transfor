@@ -609,7 +609,30 @@ default: lua_socket_keepalive_timeout 60s
 context: http, server, location
 说明：
 这个指令控制cosocket 内建连接池的默认最大空闲时间。当时间过期空闲连接将会被关闭然后从连接池中删除。这个设置会被 setkeepalive覆盖
- <time>
+<time>参数是一个整型，单位可以是s (秒), ms (毫秒), m (分钟)，默认的单位是秒，默认设置是60秒
+
+
+
+
+lua_socket_log_errors
+syntax: lua_socket_log_errors on|off
+default: lua_socket_log_errors on
+context: http, server, location
+说明：
+这个指令可以在TCP 或 UDP cosockets遇到错误的时候转为错误日志。
+如果你已经在你的代码里正确的处理和记录 错误，推荐把这个指令关闭，来让你的日志文件刷新
+
+
+
+
+lua_http10_buffering
+syntax: lua_http10_buffering on|off
+default: lua_http10_buffering on
+context: http, server, location, location-if
+
+
+
+
 
 
 
